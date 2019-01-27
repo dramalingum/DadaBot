@@ -1,8 +1,6 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
-
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Bot.Builder;
@@ -62,7 +60,6 @@ namespace DadaBot
         /// <seealso cref="IMiddleware"/>
         public async Task OnTurnAsync(ITurnContext turnContext, CancellationToken cancellationToken = default(CancellationToken))
         {
-            
             // Handle Message activity type, which is the main activity type for shown within a conversational interface
             // Message activities may contain text, speech, interactive cards, and binary or unknown attachments.
             // see https://aka.ms/about-bot-activity-message to learn more about the message and other activity types
@@ -71,6 +68,9 @@ namespace DadaBot
                 // Get the conversation state from the turn context.
                 var state = await _accessors.CounterState.GetAsync(turnContext, () => new CounterState());
                 var convData = await _accessors.ConversationData.GetAsync(turnContext, () => new ConversationData());
+                ConversationFlow flow = await _accessors.ConversationFlow.GetAsync(turnContext, () => new ConversationFlow());
+                UserProfile profile = await _accessors.UserProfile.GetAsync(turnContext, () => new UserProfile());
+
                 // Bump the turn count for this conversation.
                 state.TurnCount++;
 
@@ -84,72 +84,106 @@ namespace DadaBot
                 // Save the new turn count into the conversation state.
                 await _accessors.ConversationState.SaveChangesAsync(turnContext);
 
-                // Prompt code
-                ConversationFlow flow = await _accessors.ConversationFlow.GetAsync(turnContext, () => new ConversationFlow());
-                UserProfile profile = await _accessors.UserProfile.GetAsync(turnContext, () => new UserProfile());
+                if (flow.LastQuestionAsked != ConversationFlow.Question.None)
+                {
+                    await RegisterAsync(flow, profile, turnContext);
+                }
+                else
+                {
+                    // Welcome user
+                    await Welcome(turnContext);
 
-                await FillOutUserProfileAsync(flow, profile, turnContext);
+                    switch (turnContext.Activity.Text.ToLower())
+                    {
+                        case "hi":
+                            // Standard text
+                            await turnContext.SendActivityAsync("Hi, how may I help you today?");
+                            break;
+                        case "spongebob":
+                            // Image
+                            var reply = turnContext.Activity.CreateReply();
+                            var attachment = new Attachment
+                            {
+                                ContentUrl = "https://www.telegraph.co.uk/content/dam/TV/2015-09/30sep/spongebob-squarepants.jpg?imwidth=1400",
+                                ContentType = "image/jpg",
+                                Name = "Spongebob"
+                            };
+                            reply.Attachments = new List<Attachment>() { attachment };
+                            await turnContext.SendActivityAsync(reply, cancellationToken);
+                            break;
+                        case "buttons":
+                            // Buttons
+                            var buttonReply = turnContext.Activity.CreateReply("What is your favorite color?");
 
-                // Update state and save changes.
-                await _accessors.ConversationFlow.SetAsync(turnContext, flow);
-                await _accessors.ConversationState.SaveChangesAsync(turnContext);
+                            buttonReply.SuggestedActions = new SuggestedActions()
+                            {
+                                Actions = new List<CardAction>()
+                                {
+                                    new CardAction() { Title = "Red", Type = ActionTypes.ImBack, Value = "Red", Text = "1"},
+                                    new CardAction() { Title = "Yellow", Type = ActionTypes.ImBack, Value = "Yellow", Text = "2" },
+                                    new CardAction() { Title = "Blue", Type = ActionTypes.ImBack, Value = "Blue", Text = "3"}
+                                },
 
-                await _accessors.UserProfile.SetAsync(turnContext, profile);
-                await _accessors.ConversationState.SaveChangesAsync(turnContext);
-
-                // Echo back to the user whatever they typed.
-                //switch (turnContext.Activity.Text.ToLower())
-                //{
-                //    case "hi":
-                //        // Standard text
-                //        await turnContext.SendActivityAsync("Hi, how may I help you today?");
-                //        break;		
-                //    case "spongebob":
-                //        // Image
-                //        var reply = turnContext.Activity.CreateReply();
-                //        var attachment = new Attachment
-                //        {
-                //            ContentUrl = "https://www.telegraph.co.uk/content/dam/TV/2015-09/30sep/spongebob-squarepants.jpg?imwidth=1400",
-                //            ContentType = "image/jpg",
-                //            Name = "Spongebob"
-                //        };
-                //        reply.Attachments = new List<Attachment>() { attachment };
-                //        await turnContext.SendActivityAsync(reply, cancellationToken);
-                //        break;
-                //    case "buttons":
-                //        // Buttons
-                //        var buttonReply = turnContext.Activity.CreateReply("What is your favorite color?");
-
-                //        buttonReply.SuggestedActions = new SuggestedActions()
-                //        {
-                //            Actions = new List<CardAction>()
-                //            {
-                //                new CardAction() { Title = "Red", Type = ActionTypes.ImBack, Value = "Red", Text = "1"},
-                //                new CardAction() { Title = "Yellow", Type = ActionTypes.ImBack, Value = "Yellow", Text = "2" },
-                //                new CardAction() { Title = "Blue", Type = ActionTypes.ImBack, Value = "Blue", Text = "3"}
-                //            },
-
-                //        };
-                //        await turnContext.SendActivityAsync(buttonReply, cancellationToken);
-                //        break;
-                //    case "register":
-                //        // Prompts
-                //        // Get the state properties from the turn context.
-                        
-                //        break;
-                //    default:
-                //        var responseMessage = $"Turn {state.TurnCount}: You sent '{turnContext.Activity.Text}'\n";
-                //        await turnContext.SendActivityAsync(responseMessage);
-                //        break;
-                //}
-
-               
+                            };
+                            await turnContext.SendActivityAsync(buttonReply, cancellationToken);
+                            break;
+                        case "register":
+                            await RegisterAsync(flow, profile, turnContext);
+                            break;
+                        default:
+                            var responseMessage = $"Turn {state.TurnCount}: You sent '{turnContext.Activity.Text}'\n";
+                            await turnContext.SendActivityAsync(responseMessage);
+                            break;
+                    }
+                }
             }
             else
             {
-                await turnContext.SendActivityAsync($"{turnContext.Activity.Type} event detected");
+                // Welcome user logic
+                if (turnContext.Activity.MembersAdded.Any())
+                {
+                    // Iterate over all new members added to the conversation
+                    foreach (var member in turnContext.Activity.MembersAdded)
+                    {
+                        // Greet anyone that was not the target (recipient) of this message
+                        // the 'bot' is the recipient for events from the channel,
+                        // turnContext.Activity.MembersAdded == turnContext.Activity.Recipient.Id indicates the
+                        // bot was added to the conversation.
+                        if (member.Id != turnContext.Activity.Recipient.Id)
+                        {
+                            await Welcome(turnContext);
+                            await turnContext.SendActivityAsync($"You are seeing this message because the bot recieved at least one 'ConversationUpdate' event,indicating you (and possibly others) joined the conversation. If you are using the emulator, pressing the 'Start Over' button to trigger this event again. The specifics of the 'ConversationUpdate' event depends on the channel. You can read more information at https://aka.ms/about-botframewor-welcome-user", cancellationToken: cancellationToken);
+                        }
+                    }
+                }
             }
         }
+
+
+        private async Task RegisterAsync(ConversationFlow flow, UserProfile profile, ITurnContext turnContext)
+        {
+            // Prompt code
+            await FillOutUserProfileAsync(flow, profile, turnContext);
+
+            // Update state and save changes.
+            await _accessors.ConversationFlow.SetAsync(turnContext, flow);
+            await _accessors.ConversationState.SaveChangesAsync(turnContext);
+
+            await _accessors.UserProfile.SetAsync(turnContext, profile);
+            await _accessors.ConversationState.SaveChangesAsync(turnContext);
+        }
+
+        private async Task Welcome(ITurnContext turnContext)
+        {
+            var data = await _accessors.ConversationData.GetAsync(turnContext, () => new ConversationData());
+
+            if (!data.Welcomed)
+                await turnContext.SendActivityAsync("Hi, Welcome to DadaBot :) \r\n What's up?");
+                data.Welcomed = true;
+                await _accessors.ConversationData.SetAsync(turnContext, data);
+                await _accessors.ConversationState.SaveChangesAsync(turnContext);
+        }
+
 
         /// <summary>
         /// Manages the conversation flow for filling out the user's profile, including parsing and validation.
