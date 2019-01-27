@@ -25,19 +25,29 @@ namespace DadaBot
     /// <seealso cref="https://docs.microsoft.com/en-us/aspnet/core/fundamentals/dependency-injection?view=aspnetcore-2.1"/>
     public class DadaBot : IBot
     {
+        public static readonly string LuisKey = "DadaBot";
+
         private readonly DadaBotAccessors _accessors;
         private readonly ILogger _logger;
+        private readonly BotServices _services;
+
         /// <summary>
         /// Initializes a new instance of the class.
         /// </summary>
         /// <param name="accessors">A class containing <see cref="IStatePropertyAccessor{T}"/> used to manage state.</param>
         /// <param name="loggerFactory">A <see cref="ILoggerFactory"/> that is hooked to the Azure App Service provider.</param>
         /// <seealso cref="https://docs.microsoft.com/en-us/aspnet/core/fundamentals/logging/?view=aspnetcore-2.1#windows-eventlog-provider"/>
-        public DadaBot(DadaBotAccessors accessors, ILoggerFactory loggerFactory)
+        public DadaBot(DadaBotAccessors accessors, ILoggerFactory loggerFactory, BotServices services)
         {
             if (loggerFactory == null)
             {
                 throw new System.ArgumentNullException(nameof(loggerFactory));
+            }
+
+            _services = services ?? throw new System.ArgumentNullException(nameof(services));
+            if (!_services.LuisServices.ContainsKey(LuisKey))
+            {
+                throw new System.ArgumentException($"Invalid configuration....");
             }
 
             _logger = loggerFactory.CreateLogger<DadaBot>();
@@ -92,6 +102,24 @@ namespace DadaBot
                 {
                     // Welcome user
                     await Welcome(turnContext);
+
+                    // LUIS Implementation
+                    var recognizerResult = await _services.LuisServices[LuisKey].RecognizeAsync(turnContext, cancellationToken);
+                    var topIntent = recognizerResult?.GetTopScoringIntent();
+                    if (topIntent != null && topIntent.HasValue && topIntent.Value.intent != "None")
+                    {
+                        await turnContext.SendActivityAsync($"==>LUIS Top Scoring Intent: {topIntent.Value.intent}, Score: {topIntent.Value.score}\n");
+                    }
+                    else
+                    {
+                        var msg = @"No LUIS intents were found.
+                        This sample is about identifying two user intents:
+                        'Calendar.Add'
+                        'Calendar.Find'
+                        Try typing 'Add Event' or 'Show me tomorrow'.";
+                        await turnContext.SendActivityAsync(msg);
+                    }
+                    // --- End LUIS
 
                     switch (turnContext.Activity.Text.ToLower())
                     {

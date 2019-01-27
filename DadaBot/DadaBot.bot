@@ -1,5 +1,5 @@
 ﻿{
-  "name": "EchoBot1",
+  "name": "DadaBot",
   "services": [
     {
       "type": "endpoint",
@@ -8,6 +8,16 @@
       "appId": "",
       "appPassword": "",
       "id": "1"
+    },
+
+    {
+      "type": "luis",
+      "name": "DadaBot",
+      "appId": "49c686e9-dc19-4f21-b501-4d5b489ede8c",
+      "authoringKey": "eeb2182475964de5a7d1511cdb24bb55",
+      "subscriptionKey": "",
+      "GetEndpoint": "https://westus.api.cognitive.microsoft.com/luis/v2.0/apps/",
+      "region": "westus"
     }
   ],
   "padlock": "",

@@ -54,15 +54,20 @@ namespace DadaBot
         /// <seealso cref="https://docs.microsoft.com/en-us/azure/bot-service/bot-service-manage-channels?view=azure-bot-service-4.0"/>
         public void ConfigureServices(IServiceCollection services)
         {
+            var secretKey = Configuration.GetSection("botFileSecret")?.Value;
+            var botFilePath = Configuration.GetSection("botFilePath")?.Value;
+
+            // Loads .bot configuration file and adds a singleton that your Bot can access through dependency injection.
+            var botConfig = BotConfiguration.Load(botFilePath ?? @".\DadaBot.bot", secretKey);
+            services.AddSingleton(sp => botConfig ?? throw new InvalidOperationException($"The .bot config file could not be loaded. ({botConfig})"));
+
+            // Initialize Bot Connected Services clients.
+            var connectedServices = new BotServices(botConfig);
+            services.AddSingleton(sp => connectedServices);
+            services.AddSingleton(sp => botConfig);
+
             services.AddBot<global::DadaBot.DadaBot>(options =>
-           {
-               var secretKey = Configuration.GetSection("botFileSecret")?.Value;
-               var botFilePath = Configuration.GetSection("botFilePath")?.Value;
-
-                // Loads .bot configuration file and adds a singleton that your Bot can access through dependency injection.
-                var botConfig = BotConfiguration.Load(botFilePath ?? @".\EchoBot1.bot", secretKey);
-               services.AddSingleton(sp => botConfig ?? throw new InvalidOperationException($"The .bot config file could not be loaded. ({botConfig})"));
-
+            {
                 // Retrieve current endpoint.
                 var environment = _isProduction ? "production" : "development";
                var service = botConfig.Services.FirstOrDefault(s => s.Type == "endpoint" && s.Name == environment);
@@ -110,7 +115,7 @@ namespace DadaBot
                 var conversationState = new Microsoft.Bot.Builder.ConversationState(dataStore);
 
                options.State.Add(conversationState);
-           });
+            });
 
             // Create and register state accessors.
             // Accessors created here are passed into the IBot-derived class on every turn.
